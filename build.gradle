@@ -1,0 +1,51 @@
+description = '---------- JCConf 2014 Hazelcast Session Sameple Code for Demo ---------- \n'
+
+apply plugin: 'java'
+apply plugin: 'application'
+apply plugin: 'eclipse'
+
+mainClassName = "org.cyberjos.jcconf2014.SampleMain"
+
+tasks.eclipse.dependsOn(cleanEclipse)
+
+ext {
+    maven_group = 'org.cyberjos'
+    maven_artifact = 'jcconf2014-hazelcast-sample'
+    maven_version = '0.0.1'
+    welcomeMessage = description
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    compile 'org.apache.logging.log4j:log4j-api:2.0.+'
+    compile 'org.apache.logging.log4j:log4j-core:2.0.+'
+    // Hazelcast doesn't support log4j2 yet until 3.4 so we use slf4j instead.
+    compile 'org.apache.logging.log4j:log4j-slf4j-impl:2.0.+'
+    compile 'org.slf4j:slf4j-api:1.7.+'
+    // Use this library for Spring framework.
+    compile 'org.slf4j:jcl-over-slf4j:1.7.7'
+
+    compile 'org.apache.commons:commons-lang3:3.3.+'
+    compile 'com.hazelcast:hazelcast:3.3.+'
+    compile 'org.springframework:spring-context:4.1.0.RELEASE'
+
+    testCompile('junit:junit:4.+') {
+        exclude group: 'org.hamcrest', module: 'hamcrest-core'
+    }
+    testCompile('org.mockito:mockito-core:1.9.+') {
+        exclude group: 'org.hamcrest', module: 'hamcrest-core'
+    }
+    testCompile 'org.hamcrest:hamcrest-all:1.+'
+}
+
+jar {
+    baseName = maven_artifact
+    version = maven_version
+}
+
+run {
+    print welcomeMessage
+}
