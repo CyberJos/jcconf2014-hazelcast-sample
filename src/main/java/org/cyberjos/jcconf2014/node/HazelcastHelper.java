@@ -22,6 +22,7 @@ package org.cyberjos.jcconf2014.node;
 
 import java.util.HashSet;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.locks.Lock;
@@ -35,11 +36,11 @@ import org.springframework.stereotype.Component;
 import com.hazelcast.config.ClasspathXmlConfig;
 import com.hazelcast.core.Hazelcast;
 import com.hazelcast.core.HazelcastInstance;
+import com.hazelcast.core.IAtomicLong;
 import com.hazelcast.core.IAtomicReference;
 import com.hazelcast.core.IMap;
 import com.hazelcast.core.IQueue;
 import com.hazelcast.core.ITopic;
-import com.hazelcast.core.Member;
 
 /**
  * Hazelcast helper.
@@ -65,14 +66,19 @@ public class HazelcastHelper {
     private static final String TASK_QUEUE = "TASK_QUEUE";
 
     /**
+     * The key to access task serial number.
+     */
+    private static final String TASK_NUMBER = "TASK_NUMBER";
+
+    /**
      * The logger.
      */
     static final Logger logger = LoggerFactory.getLogger(HazelcastHelper.class);
 
     /**
-     * The work mode.
+     * The working mode.
      */
-    private static final boolean WORK_MODE = false;
+    private static final boolean WORKING_MODE = true;
 
     /**
      * The {@code HazelcastInstance} holder is a singleton enumeration for the
@@ -97,7 +103,7 @@ public class HazelcastHelper {
          */
         private Holder() {
             this.hazelcastInstance = Hazelcast.newHazelcastInstance(new ClasspathXmlConfig("hazelcast.xml"));
-            logger.info("Hazelcast instance has been launched, member ID: {}", this.hazelcastInstance.getCluster().getLocalMember().getUuid());
+            logger.info("Hazelcast instance has been launched, member ID: {}", this.getMemberId());
         }
 
         /**
@@ -108,12 +114,15 @@ public class HazelcastHelper {
         public HazelcastInstance getInstance() {
             return this.hazelcastInstance;
         }
-    }
 
-    /**
-     * Constructor.
-     */
-    public HazelcastHelper() {
+        /**
+         * Returns the member ID.
+         *
+         * @return the member ID
+         */
+        public String getMemberId() {
+            return this.hazelcastInstance.getCluster().getLocalMember().getUuid();
+        }
     }
 
     /**
@@ -125,34 +134,23 @@ public class HazelcastHelper {
     public void registerNode(final CloudNode cloudNode) {
         Objects.requireNonNull(cloudNode, "The given cloud node must not be null.");
 
-        final NodeRecord record = new NodeRecord(cloudNode.getName(), Holder.INSTANCE.getInstance().getCluster().getLocalMember().getUuid());
-        HazelcastHelper.getMap(ACTIVE_NODES).put(cloudNode.getName(), record);
-        HazelcastHelper.<NodeMessage>getTopic(cloudNode.getName()).addMessageListener(cloudNode);
+        final String nodeName = cloudNode.getName();
+        final NodeRecord record = new NodeRecord(nodeName, Holder.INSTANCE.getMemberId());
+        HazelcastHelper.getMap(ACTIVE_NODES).put(nodeName, record);
+        HazelcastHelper.<NodeMessage>getTopic(nodeName).addMessageListener(cloudNode);
         Holder.INSTANCE.getInstance().getCluster().addMembershipListener(cloudNode);
         logger.info("The given node registered: {}", record);
 
-        final NodeRecord masterNode = this.getMasterNodeRecord();
-        if (masterNode == null) {
+        final Optional<NodeRecord> optional = this.getMasterNodeRecord();
+        if (!optional.isPresent()) {
             this.setMaster(cloudNode);
             return;
         }
 
-        logger.info("Found the master node: {}", masterNode);
+        logger.info("Found the master node: {}", optional.get());
 
-        if (WORK_MODE) {
-            final Thread thread = new Thread(() -> {
-                logger.info("Started to work on task queue...");
-                while (!cloudNode.getName().equals(HazelcastHelper.this.getMasterNodeRecord().getNodeName())) {
-                    try {
-                        final String task = HazelcastHelper.this.getTaskQueue().take();
-                        logger.info("Retrieved task: {}", task);
-                        Thread.sleep(RandomUtils.nextInt(5000, 10000));
-                        logger.info("Finished task: {}", task);
-                    } catch (final Exception ex) {
-                        logger.error("Exception occurred!", ex);
-                    }
-                }
-            });
+        if (WORKING_MODE) {
+            final Thread thread = new Thread(this.createConsumer(cloudNode));
             thread.start();
         }
     }
@@ -180,7 +178,7 @@ public class HazelcastHelper {
      *         successfully
      * @throws NullPointerException if the given node is {@code null}
      */
-    public boolean setMaster(final CloudNode cloudNode) {
+    public synchronized boolean setMaster(final CloudNode cloudNode) {
         Objects.requireNonNull(cloudNode, "The given cloud node must not be null.");
 
         final Lock lock = Holder.INSTANCE.getInstance().getLock("my-distributed-lock");
@@ -188,17 +186,14 @@ public class HazelcastHelper {
 
         try {
             final NodeRecord masterRecord = HazelcastHelper.<NodeRecord>getAtomicReference(MASTER_NODE).get();
-            boolean masterExisted = false;
 
             if (masterRecord != null) {
-                for (final Member member : Holder.INSTANCE.getInstance().getCluster().getMembers()) {
-                    if (StringUtils.equals(masterRecord.getMemberId(), member.getUuid())) {
-                        masterExisted = true;
-                        break;
-                    }
-                }
+                final long count = Holder.INSTANCE.getInstance().getCluster().getMembers()
+                        .stream()
+                        .filter(member -> StringUtils.equals(masterRecord.getMemberId(), member.getUuid()))
+                        .count();
 
-                if (masterExisted) {
+                if (count != 0) {
                     logger.warn("The master node has already existed: {}", masterRecord);
                     return false;
                 }
@@ -208,30 +203,12 @@ public class HazelcastHelper {
 
             final NodeRecord newMasterRecord = HazelcastHelper.<String, NodeRecord>getMap(ACTIVE_NODES).get(cloudNode.getName());
             HazelcastHelper.getAtomicReference(MASTER_NODE).set(newMasterRecord);
-            logger.info("The master node has already changed to {}", newMasterRecord);
+            logger.info("This node has already become the new master node: {}", newMasterRecord);
 
-            if (WORK_MODE) {
-                final Thread thread = new Thread(() -> {
-                    logger.info("Assignment thread started.");
-                    while (true) {
-                        try {
-                            Thread.sleep(RandomUtils.nextInt(3000, 6000));
-                            final Set<String> nodes = new HashSet<>(HazelcastHelper.this.getActiveNodes());
-                            nodes.remove(cloudNode.getName());
-                            if (nodes.size() > 0) {
-                                final String task = "TASK-" + System.currentTimeMillis();
-                                HazelcastHelper.this.getTaskQueue().put(task);
-                                logger.info("Added task {}", task);
-                            }
-                        } catch (final Exception ex) {
-                            logger.error("Exception occurred!", ex);
-                        }
-                    }
-                });
+            if (WORKING_MODE) {
+                final Thread thread = new Thread(this.createProducer(cloudNode));
                 thread.start();
             }
-        } catch (final Exception ex) {
-            return false;
         } finally {
             lock.unlock();
         }
@@ -240,12 +217,25 @@ public class HazelcastHelper {
     }
 
     /**
+     * Returns {@code true} if the given cloud node is the master node.
+     *
+     * @param cloudNode the cloud node
+     * @return {@code true} if the given cloud node is the master node
+     * @throws NullPointerException if the given node is {@code null}
+     */
+    public boolean isMaster(final CloudNode cloudNode) {
+        Objects.requireNonNull(cloudNode, "The given node must not be null.");
+        final Optional<NodeRecord> optional = this.getMasterNodeRecord();
+        return optional.isPresent() && StringUtils.equals(cloudNode.getName(), optional.get().getNodeName());
+    }
+
+    /**
      * Returns the name of the master node.
      *
      * @return the name of the master node
      */
-    public NodeRecord getMasterNodeRecord() {
-        return HazelcastHelper.<NodeRecord>getAtomicReference(MASTER_NODE).get();
+    public Optional<NodeRecord> getMasterNodeRecord() {
+        return Optional.ofNullable(HazelcastHelper.<NodeRecord>getAtomicReference(MASTER_NODE).get());
     }
 
     /**
@@ -324,5 +314,66 @@ public class HazelcastHelper {
     private static <T> IAtomicReference<T> getAtomicReference(final String referenceName) {
         Objects.requireNonNull(referenceName, "The given atomic reference name must not be null.");
         return Holder.INSTANCE.getInstance().getAtomicReference(referenceName);
+    }
+
+    /**
+     * Returns the atomic long integer related with the given name.
+     *
+     * @param numberName the atomic long integer
+     * @return the name of atomic long integer
+     * @throws NullPointerException if the given name is {@code null}
+     */
+    private static IAtomicLong getAtomicLong(final String numberName) {
+        Objects.requireNonNull(numberName, "The given atomic integer name must not be null.");
+        return Holder.INSTANCE.getInstance().getAtomicLong(numberName);
+    }
+
+    /**
+     * Creates and returns a new consumer.
+     *
+     * @param cloudNode the cloud node which runs this new consumer
+     * @return a new consumer
+     */
+    private Runnable createConsumer(final CloudNode cloudNode) {
+        return () -> {
+            logger.info("Consumer thread started.");
+            while (!this.isMaster(cloudNode)) {
+                try {
+                    final String task = HazelcastHelper.this.getTaskQueue().take();
+                    logger.info("Retrieved task: {}", task);
+                    Thread.sleep(RandomUtils.nextInt(2500, 7000));
+                    logger.info("Finished task: {}", task);
+                } catch (final Exception ex) {
+                    logger.error("Exception occurred!", ex);
+                }
+            }
+        };
+    }
+
+    /**
+     * Creates and returns a new producer.
+     *
+     * @param cloudNode the cloud node which runs this new producer
+     * @return a new producer
+     */
+    private Runnable createProducer(final CloudNode cloudNode) {
+        return () -> {
+            logger.info("Producer thread started.");
+            while (this.isMaster(cloudNode)) {
+                try {
+                    final Set<String> nodes = new HashSet<>(HazelcastHelper.this.getActiveNodes());
+                    nodes.remove(cloudNode.getName());
+                    if (nodes.size() > 0) {
+                        final IAtomicLong serialNumber = getAtomicLong(TASK_NUMBER);
+                        final String taskName = String.format("TASK-%d-%d", serialNumber.incrementAndGet(), System.currentTimeMillis());
+                        HazelcastHelper.this.getTaskQueue().put(taskName);
+                        logger.info("Added task {}", taskName);
+                    }
+                    Thread.sleep(RandomUtils.nextInt(1500, 4000));
+                } catch (final Exception ex) {
+                    logger.error("Exception occurred!", ex);
+                }
+            }
+        };
     }
 }

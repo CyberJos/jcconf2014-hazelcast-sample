@@ -60,8 +60,8 @@ public class GetStartedMain {
         if (MapUtils.isNotEmpty(mapCustomers)) {
             logger.info("Found items in the map {} ", KEY_CUSTOMERS);
             mapCustomers.entrySet()
-            .stream()
-            .forEachOrdered(entry -> logger.info("  -- key: {}, value: {}", entry.getKey(), entry.getValue()));
+                    .stream()
+                    .forEach(entry -> logger.info("  -- key: {}, value: {}", entry.getKey(), entry.getValue()));
         } else {
             logger.info("No data found in the map {}.", KEY_CUSTOMERS);
         }

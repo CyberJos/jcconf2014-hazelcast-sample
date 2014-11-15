@@ -22,17 +22,18 @@ package org.cyberjos.jcconf2014.node;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Optional;
 
 import javax.annotation.PostConstruct;
 import javax.annotation.PreDestroy;
 
+import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import com.hazelcast.core.Hazelcast;
-import com.hazelcast.core.Member;
 import com.hazelcast.core.MemberAttributeEvent;
 import com.hazelcast.core.MembershipEvent;
 import com.hazelcast.core.Message;
@@ -71,10 +72,9 @@ public class CloudNodeImpl implements CloudNode {
             logger.info("Shutdown hook is invoked.");
             this.deactivate();
             try {
-                Thread.sleep(1000);
                 Thread.currentThread().join();
             } catch (final Exception ex) {
-                logger.warn("Error!", ex);
+                logger.warn("An error is occurred while shuting down.", ex);
             }
             Hazelcast.shutdownAll();
         }));
@@ -97,7 +97,7 @@ public class CloudNodeImpl implements CloudNode {
                     .forEach(name -> logger.debug("==> Found: {}", name));
             this.hazelcastHelper.getActiveNodes()
                     .stream()
-                    .filter(name -> !this.nodeName.equals(name))
+                    .filter(name -> !StringUtils.equals(this.nodeName, name))
                     .forEach(name -> this.send(name, "Hi, I am " + this.nodeName));
         }
     }
@@ -136,7 +136,7 @@ public class CloudNodeImpl implements CloudNode {
     public void onMessage(final Message<NodeMessage> message) {
         final NodeMessage nodeMessage = message.getMessageObject();
 
-        logger.info("Incoming message sent from {}: \"{}\"", nodeMessage.getFrom(), nodeMessage.getContent());
+        logger.info("Incoming message sent from {} on {}: \"{}\"", nodeMessage.getFrom(), nodeMessage.getCreationTime(), nodeMessage.getContent());
     }
 
     /**
@@ -151,26 +151,26 @@ public class CloudNodeImpl implements CloudNode {
      * {@inheritDoc}
      */
     @Override
-    public void memberAdded(final MembershipEvent membershipEvent) {
-        // Do nothing.
+    public void memberRemoved(final MembershipEvent membershipEvent) {
+        final String removedMemberId = membershipEvent.getMember().getUuid();
+
+        logger.info("Found there is one node removed from this cluster: {}", removedMemberId);
+
+        final Optional<NodeRecord> masterNode = this.hazelcastHelper.getMasterNodeRecord();
+        if (!masterNode.isPresent() || StringUtils.equals(removedMemberId, masterNode.get().getMemberId())) {
+            logger.info("The removed node is a master node. Trying to become the master node.");
+            this.hazelcastHelper.setMaster(this);
+        } else {
+            logger.info("The current master node: {}", masterNode.get());
+        }
     }
 
     /**
      * {@inheritDoc}
      */
     @Override
-    public void memberRemoved(final MembershipEvent membershipEvent) {
-        final Member removedMember = membershipEvent.getMember();
-
-        logger.info("Found there is one node removed from this cluster: {}", removedMember.getUuid());
-
-        final NodeRecord masterNode = this.hazelcastHelper.getMasterNodeRecord();
-        if ((masterNode == null) || masterNode.getMemberId().equals(removedMember.getUuid())) {
-            logger.info("The removed node is a master node. Trying to vote a new one");
-            this.hazelcastHelper.setMaster(this);
-        } else {
-            logger.info("The master node: {}", masterNode);
-        }
+    public void memberAdded(final MembershipEvent membershipEvent) {
+        // Do nothing.
     }
 
     /**
