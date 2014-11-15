@@ -1,0 +1,71 @@
+<hazelcast
+	xsi:schemaLocation="http://www.hazelcast.com/schema/config
+    http://www.hazelcast.com/schema/config/hazelcast-config-3.3.xsd"
+	xmlns="http://www.hazelcast.com/schema/config" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+
+	<group>
+		<name>jcconf2014-hazelcast-sample</name>
+		<password>jcconf2014-hazelcast</password>
+	</group>
+
+	<network>
+		<port auto-increment="true">5701</port>
+		<join>
+			<multicast enabled="true">
+				<multicast-group>224.2.2.3</multicast-group>
+				<multicast-port>54327</multicast-port>
+			</multicast>
+			<tcp-ip enabled="false">
+				<member>localhost:5701</member>
+				<member>localhost:5702</member>
+			</tcp-ip>
+		</join>
+		<interfaces enabled="false">
+			<interface>172.17.42.*</interface>
+		</interfaces>
+	</network>
+
+	<queue name="default">
+		<!-- Maximum size of the queue. Any integer between 0 and Integer.MAX_VALUE. 
+			Defaults to 0, which means Integer.MAX_VALUE. -->
+		<max-size-per-jvm>10000</max-size-per-jvm>
+		<!-- Maximum number of seconds for each item to stay in the queue. Defaults to 0, 
+		    which means infinite. -->
+		<time-to-live-seconds>0</time-to-live-seconds>
+	</queue>
+
+	<map name="default">
+		<!-- IMap Settings -->
+		<!-- Data type: BINARY、OBJECT、OFFHEAP -->
+		<in-memory-format>BINARY</in-memory-format>
+		<!-- Defaults to 1. 0 is no backup -->
+		<backup-count>1</backup-count>
+		<!-- Defaults to 0, which means no time-out -->
+		<time-to-live-seconds>0</time-to-live-seconds>
+		<!-- Defaults to 0, which means no time-out -->
+		<max-idle-seconds>0</max-idle-seconds>
+
+		<!-- Defaults to NONE, which means no eviction. Other option: LRU、LFU -->
+		<eviction-policy>NONE</eviction-policy>
+		<!-- PER_NODE is the unit of Node. 0 means Integer.MAX_VALUE. -->
+		<max-size policy="PER_NODE">0</max-size>
+
+		<!--
+		 <max-size policy="PER_PARTITION">27100</max-size>
+		 -->
+		<!-- Heap size 	(MB)-->
+		<!-- 
+		<max-size policy="USED_HEAP_SIZE">4096</max-size> 
+		-->
+		<!--  Percentage -->
+		<!-- 
+		<max-size policy="USED_HEAP_PERCENTAGE">75</max-size>
+		-->
+
+		<eviction-percentage>25</eviction-percentage>
+	</map>
+
+	<properties>
+		<property name="hazelcast.logging.type">slf4j</property>
+	</properties>
+</hazelcast>

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Configuration>
+  <Appenders>
+    <Console name="STDOUT" target="SYSTEM_OUT">
+      <PatternLayout pattern="%date{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %class (%file:%line) - %msg%n" />
+    </Console>
+  </Appenders>
+
+  <Loggers>
+    <Logger name="org.cyberjos.jcconf2014" level="debug" />
+    <Root level="info">
+      <AppenderRef ref="STDOUT" />
+    </Root>
+  </Loggers>
+</Configuration>
